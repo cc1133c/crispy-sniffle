@@ -218,6 +218,85 @@ obj_ts.SetProperties(InstancePath='/superman/Asset/...', ValuesJson='{"Health":1
 
 MCP 服务跑在编辑器进程里，编辑器关闭即断开。这不是常驻后台服务。
 
+### 7.8 UMG 布局与颜色：文档没写的正确写法
+
+`widget_edit` 那 9 个方法只覆盖「增、删、查、换」，**布局和颜色得绕到对象属性上写**。实测对照：
+
+| 写法 | 结果 |
+|---|---|
+| `ue.widget_slot(wbp, name, 'Position', '0,0')` | ❌ `failed to set 'Position'` |
+| `ue.widget_slot(wbp, name, 'Size', '40,40')` | ❌ `failed to set 'Size'` |
+| `ue.widget_set_property(wbp, name, 'ColorAndOpacity', '0,0,0,1')` | ❌ `failed to set`（属性是 BPReadOnly） |
+| `slot.set_position(...)` / `slot.set_size(...)` | ❌ 4.18 未暴露这些方法 |
+| `slot.get_property('LayoutData').get_field('Offsets').set_field(...)` | ✅ |
+| `widget.ColorAndOpacity = ue.FLinearColor(r, g, b, a)` | ✅ |
+
+可用写法：
+
+```python
+tree = wbp.get_property('WidgetTree')
+root = tree.get_property('RootWidget')
+
+for s in root.get_property('Slots'):
+    c = s.get_property('Content')
+    if c is not None and c.get_name() == 'Image_1':
+        offs = s.get_property('LayoutData').get_field('Offsets')
+        offs.set_field('Left', 0.0)
+        offs.set_field('Top', 0.0)
+        offs.set_field('Right', 120.0)
+        offs.set_field('Bottom', 120.0)
+        c.ColorAndOpacity = ue.FLinearColor(1.0, 0.0, 0.0, 1.0)
+```
+
+**最关键的一条：Offsets 的语义和原版 UE 不一样。**
+
+| 字段 | 原版 UE | 这个编辑器 |
+|---|---|---|
+| `Left` / `Top` | 位置 | 位置（一致） |
+| `Right` / `Bottom` | 右下边界的绝对坐标，宽 = Right − Left | **直接就是宽 / 高** |
+
+按原版语义写 `(0, 36, 288, 38)` 想画一条 2px 横线，实际会渲染成 **288 × 38 的色块**；多条叠起来就糊成一整块。`widget_inspect` 也按这个语义显示，所以它打印的 `Size` 就是 offset 值本身，不是算出来的宽高。
+
+### 7.9 旋转做不了
+
+`RenderTransform.Angle` 在 4.18 上写不进去：
+
+```python
+rt = widget.get_property('RenderTransform')
+rt.set_field('Angle', 45.0)
+widget.set_property('RenderTransform', rt)   # 调用不报错
+# 读回：{'Angle': 0.0}   值没进去
+```
+
+`FWidgetTransform` 是按值拷贝，改了字段也回写不到控件上。需要斜线时只能用**阶梯小方块**近似（例如 6×6 的块按 6px 步进排 12 个），或者直接用自带斜线的贴图。
+
+### 7.10 禁用 API 清单（本版本实测，会崩）
+
+下面这组来自社区仓库 `quan686/pubgld-mcp` 的实测记录（2026-05-21 事故），在本版本编辑器上会触发**原生崩溃**。官方 `ue_py` 不拦截这些调用，只能靠自己避开。
+
+**必崩**
+
+| API / 操作 | 症状 |
+|---|---|
+| `sync_browser_to_assets` | `ModuleManager.cpp:423` ContentBrowser assert |
+| `open_editor_for_asset` / `find_editor_for_asset` | 同上 |
+| `close_editor_for_asset` / `close_all_asset_editors` | 资产编辑器操作不安全 |
+| `get_selected_assets` / `get_all_edited_assets` | 会拉起未加载的 ContentBrowser 模块 |
+| `new_object` 直接构造 UMG 子树 | 致命崩溃（日志紧邻 `LogMovieScene` legacy data） |
+| `delete_object` / `shutdown` | 危险，直接禁止 |
+
+**高危**
+
+| API | 风险 |
+|---|---|
+| `get_assets` / `get_assets_by_class` / `get_assets_by_filter` | 同步加载大对象图，`UObjectArray.cpp:82` assert |
+| `all_classes` / `tobject_iterator` | 全局遍历，对象数组膨胀 |
+| `load_package` / `unload_package` | 拉入巨大依赖图 / 使活动对象失效 |
+| `run_async_task` | 执行时长无法从 MCP 侧界定 |
+| 各类 `open_*_dialog` / `invoke_tab` | 阻塞模态循环 |
+
+> 加控件一律用 `ue.widget_add`，不要用 `ue.new_object` 手搓 WidgetTree。同样的目标：前者实测正常，后者实测崩溃。
+
 ## 8. 一次真实调用记录
 
 给 `W_TitlePlate` 加 5 个 Image 控件（`ue_py`，带计划与事务）：
