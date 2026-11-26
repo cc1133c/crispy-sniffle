@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "ugc-editor": {
+      "url": "http://127.0.0.1:12463/mcp"
+    }
+  }
+}
