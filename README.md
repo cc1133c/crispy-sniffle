@@ -334,6 +334,61 @@ SAVED_OK
 
 PRV 校验结果：`decision=pass`、`plan_valid=true`。
 
+## 9. 查阅官方 Lua API（离线文档）
+
+官方 API 站点是 JS 动态渲染，`WebFetch` 抓不到正文。用 `tools/sync_oasis_docs.py` 可以把文档同步成本地 Markdown。
+
+### 用法
+
+```bash
+# 需要 Python 3.7+，只用标准库，无需 pip 安装
+python tools/sync_oasis_docs.py --out ./official-docs --workers 8
+python tools/sync_oasis_docs.py --out ./official-docs --wiki
+```
+
+产物结构：
+
+```
+official-docs/
+├── INDEX.md                 全量索引（1400+ 类）
+└── docs/
+    ├── api/
+    │   ├── class/           类：变量 / 函数签名 / 参数 / 返回值
+    │   ├── cppenum/         枚举
+    │   ├── cppstruct/       结构体
+    │   └── globalfunc/      全局函数
+    └── wiki/                Wiki 文章正文
+```
+
+### 数据源
+
+| 用途 | 地址 |
+|---|---|
+| 类 / 枚举 / 结构体索引 | `https://developer.gp.qq.com/api/{family}/list/sorted_list.json` |
+| 详情 | `https://developer.gp.qq.com/api/{path}.json` |
+| Wiki 分类 | `https://developer.gp.qq.com/wikieditor/_api/look-Category` |
+| Wiki 正文 | `https://developer.gp.qq.com/wikieditor/_api/query-articles?Id={id}` |
+
+以上接口全部公开，不需要登录，也不需要 Cookie。
+
+### 检索方式（重要）
+
+**不要整文件读**，按需取片段：
+
+```bash
+grep "UGCGameSystem" INDEX.md                                       # 先定位文件
+grep -A 25 "GetAllPlayerPawn" docs/api/class/.../UGCGameSystem.md    # 再取签名
+```
+
+单个函数约 300–800 token，整读一个类约 20k token，差 20 倍以上。
+
+### 已知坑
+
+- `list.json` 里的 `Path` 是 `detail/class/xxx.json`，直接拼会 **404**；正确顺序来自 `sorted_list.json` 的 `class/detail/xxx.json`（`class` 在前）
+- 官方改版后接口路径可能变化，脚本需要跟着调整
+- 本仓库**不附带**同步产物（官方原文不批量分发），请自行生成
+- 中文路径需要 URL 编码，脚本已处理
+
 ---
 
 ## 相关
