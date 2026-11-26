@@ -1,4 +1,4 @@
-# 绿洲启元（和平精英 UGC）编辑器内置 MCP 接入指南
+# Editor MCP 接入指南
 
 把 `OasisEraEditor` 自带的 MCP 服务接进任意支持 **Streamable HTTP** 的 MCP 客户端（Trae / Cursor / Claude Code 等），让 AI 直接操作编辑器：跑 Python、读写蓝图与 UMG、控制 PIE、调用官方 Toolset。
 
