@@ -391,6 +391,121 @@ grep -A 25 "GetAllPlayerPawn" docs/api/class/.../UGCGameSystem.md    # 再取签
 
 ---
 
+## 10. 用 MCP 做 UMG 与「世界空间 UI」（实测补充）
+
+### 10.1 新建控件蓝图
+
+```python
+# 1) 先确认工厂（用户界面 / 控件蓝图）
+call_toolset("UGCAskQ.UGCAskQAssetToolset", "ListCreatableAssetTypes", {})
+
+# 2) 创建（路径必须在 /<ProjectName>/Asset/ 下，/Game 和项目根 UI 目录都不行）
+call_toolset("UGCAskQ.UGCAskQAssetToolset", "CreateAssetWithFactory", {
+    "FolderPath": "/superman-bf/Asset/Blueprint/UI",
+    "AssetName": "W_HeadTitleIcon",
+    "FactoryName": "UGCWidgetBlueprintFactory",
+    "FactoryPropsJson": "{}"          # 默认父类 /Script/UMG.UserWidget
+})
+
+# 3) 自动生成配套 Lua（已有则返回 created=False）
+ue.bp_lua_find_or_create("/superman-bf/Asset/Blueprint/UI/W_HeadTitleIcon")
+```
+
+新建出来的控件蓝图默认只有一个根 `CanvasPanel_0`。读控件树一律用 `ue.widget_inspect(wbp)`，拿到的对象必须用 `UGCWidgetBlueprint` 类加载，`get_asset` 返回的是 Package，不能直接用：
+
+```python
+cls = ue.find_class('UGCWidgetBlueprint')
+wbp = ue.load_object(cls, '/superman-bf/Asset/Blueprint/UI/W_Title')
+print(ue.widget_inspect(wbp))
+```
+
+### 10.2 `widget_slot` 只有 `LayoutData` 能写
+
+`Position` / `Size` / `Anchors` / `Offsets` 单独写全部失败，CanvasPanelSlot 只能整块写 `LayoutData`，值是 UE 的导出文本格式（`Anchors` 是嵌套的 `Minimum/Maximum`，不是平铺的）：
+
+```python
+val = ('(Offsets=(Left=0,Top=0,Right=0,Bottom=0),'
+       'Anchors=(Minimum=(X=0,Y=0),Maximum=(X=1,Y=1)),'
+       'Alignment=(X=0,Y=0))')
+ue.widget_slot(wbp, 'Img_Icon', 'LayoutData', val)   # 让 Image 铺满父级
+```
+
+`ZOrder`、`bAutoSize` 这类真正的 UPROPERTY 可以直接写。写完记得 `ue.compile_blueprint(wbp)` + `wbp.save_package()`。
+
+### 10.3 世界空间 WidgetComponent（头顶称号 / 世界 UI）
+
+参照工程里 `WorldUI_1` 的做法：Actor + `WidgetComponent`（`Space=0` 即 World，`bIsTwoSided=True`，`BlendMode=2` 即 Transparent，`Pivot=(0.5,0.5)`）。
+
+- **DrawSize 同时是渲染目标分辨率**。直接按世界尺寸设（比如 40cm 高）等于用 40px 渲染，必然糊。
+- **清晰度与大小解耦**：`SetDrawSize` 用高分辨率（如 256 高），再 `SetRelativeScale3D` 缩到目标世界尺寸（如 72cm），看到的是大图、采样的是高分辨率。
+- **朝向玩家（billboard）**：旋转 **Actor**，不是组件：
+
+```lua
+local Yaw = math.deg(math.atan(LocalLoc.Y - SelfLoc.Y, LocalLoc.X - SelfLoc.X))
+Self:K2_SetActorRotation(UGCMathUtility.MakeRotator(0, 0, Yaw), false)   -- 已验证可用
+```
+
+不要用 `K2_SetWorldRotation` 转组件：第 3 个参数是 out 的 `FHitResult`，Lua 传 `false` 会每帧抛 LuaException。
+
+- **只在客户端生成**：`UGCActorComponentUtility.SpawnActor` 服务器和客户端都能调；纯视觉的东西客户端本地生成即可，不占同步。
+- 取组件里的控件：`UGCWidgetUtility.GetWidgetComponentUserWidget(Comp)`；组件勾了手动重绘要 `RequestWidgetComponentRedraw(Comp)`。
+- **创建控件后不能立刻取子控件**：`CreateWidget` 完就 `GetSubWidget` 会崩（工程里已验证）。必须先 `AddChildWidget` / `SetWidget`，等控件进入控件树后再取；`Construct` 里也不要取子控件。
+
+### 10.4 运行时改图片（比例 / 裁切）
+
+| 需求 | 官方接口 |
+|---|---|
+| 取贴图像素尺寸 | `UTexture2D:Blueprint_GetSizeX()` / `GetSizeY()` |
+| 取控件实际槽位尺寸 | `Widget:GetCachedGeometry()` + `UGCWidgetUtility.GetLocalSize(Geo)` |
+| 等比显示、防拉伸 | `Widget:SetRenderScale(FVector2D)` + `SetRenderTransformPivot(FVector2D(0.5,0.5))` |
+| 只显示贴图有效区域（去透明边） | `UImage:GetBrush()` → 改 `UV0/UV1` → `UImage:SetBrush()` |
+
+注意：`UGCWidgetUtility.SetWidgetSlotSize/SetWidgetSlotPosition/GetWidgetGeometry` 的形参类型是 `UUserWidget`，只对「用户控件」子节点可靠；对 `UImage` 这类普通控件请用 `GetCachedGeometry` + 渲染缩放。
+
+### 10.5 贴图源数据（只读可用，不能改尺寸）
+
+```python
+d = tex.texture_get_source_data()   # bytearray，长度 = W*H*4，BGRA 顺序
+# 例如 1255*836*4 = 4196720；alpha = d[3::4]
+```
+
+可以做 alpha 边界分析，但 `texture_set_source_data(data, mip_id)` 的第二个参数是 **mip 索引**，不能改宽高。想真正裁切贴图只能重新导入资源。
+
+---
+
+## 11. 用 MCP 批量复制关卡（实测）
+
+目标：把子关卡（如 `senlin`）复制一份到主地图旁边，作为独立打怪场景。
+
+```python
+# 1) 磁盘级复制 .umap（编辑器开着也能做）
+#    Copy-Item senlin.umap senlin_battle.umap
+
+# 2) 加进当前世界（必须用完整包路径，短名会报 package does not exist）
+world = ue.get_editor_world()
+ue.add_level_to_world(world, '/superman-bf/senlin_battle')
+
+# 3) 整体平移：先对全部 Actor 做位置快照，再按「快照 + 偏移」绝对赋值
+#    （父 Actor 移动时 ChildActor 会跟随，逐个相对移动会双倍偏移）
+
+# 4) 保存：pkg.modify() + pkg.save_package()
+#    这一步会产出同名 .uasset，不会写 .umap
+```
+
+四个坑：
+
+| 坑 | 现象 | 解决 |
+|---|---|---|
+| 保存接口对新关卡包无效 | `project_save` / `editor_save_all` / `console_exec("SAVEALL")` 都返回成功但不写文件 | 用 `ue.get_asset("/项目/关卡名")` 取包 → `modify()` → `save_package()` |
+| 包名与内部对象名不一致 | `save_package` 写出的是 `xxx.uasset` | 用 PowerShell 把 `.uasset` 复制覆盖同名 `.umap`，再删掉 `.uasset`（不用关编辑器） |
+| ChildActor 双倍偏移 | 子 Actor 被移动两次 | 先快照全部 Actor 坐标，再按 `snapshot[i] + offset` 绝对赋值（幂等） |
+| Landscape GUID 冲突 | 打开时提示保存 / 换新 GUID | 正常现象，按提示保存即可 |
+| 放置位置判断错 | 以为复制失败、实际离得很远 | 别按包围盒判断，先用 `all_actors()` 统计坐标密集区再定偏移 |
+
+`ue.duplicate_asset` 不可用（UGC 资产必须在 `Asset/` 下）；复制关卡走「文件复制 + `add_level_to_world`」。
+
+---
+
 ## 相关
 
 - 官方 Lua API 文档：<https://developer.gp.qq.com/api/#/>
