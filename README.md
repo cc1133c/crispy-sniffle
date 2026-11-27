@@ -297,44 +297,7 @@ widget.set_property('RenderTransform', rt)   # 调用不报错
 
 > 加控件一律用 `ue.widget_add`，不要用 `ue.new_object` 手搓 WidgetTree。同样的目标：前者实测正常，后者实测崩溃。
 
-## 8. 一次真实调用记录
-
-给 `W_TitlePlate` 加 5 个 Image 控件（`ue_py`，带计划与事务）：
-
-```python
-import unreal_engine as ue
-
-wbp = ue.find_asset('/superman/Asset/Blueprint/UI/W_TitlePlate.W_TitlePlate')
-print(ue.widget_inspect(wbp))          # 操作前
-
-for i in range(1, 6):
-    ue.widget_add(wbp, 'Image', 'Image_%d' % i, 'CanvasPanel_0')
-
-print(ue.widget_inspect(wbp))          # 操作后
-ue.compile_blueprint(wbp)
-wbp.save_package()
-```
-
-返回：
-
-```
-BEFORE
-[CanvasPanel] CanvasPanel_0
-
-AFTER
-[CanvasPanel] CanvasPanel_0
-  [Image] Image_1  {CanvasPanel (Pos: 0,0, Size: 100,30)}
-  [Image] Image_2  {CanvasPanel (Pos: 0,0, Size: 100,30)}
-  [Image] Image_3  {CanvasPanel (Pos: 0,0, Size: 100,30)}
-  [Image] Image_4  {CanvasPanel (Pos: 0,0, Size: 100,30)}
-  [Image] Image_5  {CanvasPanel (Pos: 0,0, Size: 100,30)}
-
-SAVED_OK
-```
-
-PRV 校验结果：`decision=pass`、`plan_valid=true`。
-
-## 9. 查阅官方 Lua API（离线文档）
+## 8. 查阅官方 Lua API（离线文档）
 
 官方 API 站点是 JS 动态渲染，`WebFetch` 抓不到正文。用 `tools/sync_oasis_docs.py` 可以把文档同步成本地 Markdown。
 
@@ -391,7 +354,7 @@ grep -A 25 "GetAllPlayerPawn" docs/api/class/.../UGCGameSystem.md    # 再取签
 
 ---
 
-## 10. 用 MCP 做 UMG 与「世界空间 UI」（实测补充）
+## 9. 用 MCP 做 UMG 与「世界空间 UI」（实测补充）
 
 ### 10.1 新建控件蓝图
 
@@ -473,7 +436,7 @@ d = tex.texture_get_source_data()   # bytearray，长度 = W*H*4，BGRA 顺序
 
 ---
 
-## 11. 用 MCP 批量复制关卡（实测）
+## 10. 用 MCP 批量复制关卡（实测）
 
 目标：把子关卡（如 `senlin`）复制一份到主地图旁边，作为独立打怪场景。
 
